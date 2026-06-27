@@ -1,0 +1,524 @@
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Twitch Ticker Overlay</title>
+
+<!--
+  ╔════════════════════════════════════════════════════════════════╗
+  ║   TWITCH TICKER OVERLAY — OBS / Streamlabs Browser Source     ║
+  ╠════════════════════════════════════════════════════════════════╣
+  ║  HOW TO GET LIVE SYNC IN 4 STEPS:                             ║
+  ║                                                                ║
+  ║  STEP 1 — Create a Twitch app (one-time, 2 min):             ║
+  ║    → Go to https://dev.twitch.tv/console                      ║
+  ║    → Click "Register Your Application"                         ║
+  ║    → Name: anything (e.g. "My Overlay")                        ║
+  ║    → OAuth Redirect URL: http://localhost                      ║
+  ║    → Category: Broadcasting                                    ║
+  ║    → Click Create → copy your CLIENT ID                        ║
+  ║                                                                ║
+  ║  STEP 2 — Generate an OAuth token:                            ║
+  ║    → Go to https://twitchtokengenerator.com                    ║
+  ║    → Paste your Client ID                                      ║
+  ║    → Enable scopes:                                            ║
+  ║        channel:read:subscriptions                              ║
+  ║        bits:read                                               ║
+  ║    → Click "Generate Token" → copy the ACCESS TOKEN            ║
+  ║                                                                ║
+  ║  STEP 3 — Fill in CONFIG below (3 fields):                    ║
+  ║    channel, clientId, oauthToken                               ║
+  ║    Then set  demoMode: false                                   ║
+  ║                                                                ║
+  ║  STEP 4 — Add to OBS / Streamlabs:                           ║
+  ║    → Add Source → Browser Source → Local File                  ║
+  ║    → Width: 2000   Height: 50                                  ║
+  ║    → Drag to the very bottom of your scene                     ║
+  ║    → (You can stretch width freely — it tiles seamlessly)      ║
+  ╚════════════════════════════════════════════════════════════════╝
+-->
+
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  background: transparent !important;
+  overflow: hidden;
+  width: 2000px;
+  height: 50px;
+  font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.ticker-bar {
+  width: 2000px;
+  height: 50px;
+  background: rgba(10, 10, 14, 0.93);
+  border-top: 2px solid #9147ff;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  position: relative;
+}
+
+.ticker-bar::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 40px;
+  background: linear-gradient(to right, rgba(10,10,14,0.98), transparent);
+  z-index: 10;
+  pointer-events: none;
+}
+
+.ticker-bar::after {
+  content: '';
+  position: absolute;
+  right: 0; top: 0; bottom: 0;
+  width: 40px;
+  background: linear-gradient(to left, rgba(10,10,14,0.98), transparent);
+  z-index: 10;
+  pointer-events: none;
+}
+
+.ticker-track-wrapper {
+  overflow: hidden;
+  height: 50px;
+  width: 100%;
+  display: flex;
+  align-items: center;
+}
+
+.ticker-track {
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  will-change: transform;
+}
+
+.ticker-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 22px;
+  height: 50px;
+  flex-shrink: 0;
+  border-right: 1px solid rgba(145, 71, 255, 0.15);
+}
+
+.ticker-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.icon-sub  { background: rgba(145,71,255,0.22); color: #bf94ff; border: 1px solid rgba(145,71,255,0.4); }
+.icon-gift { background: rgba(252,161,73,0.18); color: #fca149; border: 1px solid rgba(252,161,73,0.35); }
+.icon-bits { background: rgba(0,176,255,0.15);  color: #00b0ff; border: 1px solid rgba(0,176,255,0.35); }
+
+.ticker-icon svg { width: 12px; height: 12px; }
+
+.ticker-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.15;
+}
+
+.ticker-name {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #ffffff;
+  letter-spacing: 0.01em;
+}
+
+.ticker-detail {
+  font-size: 10px;
+  font-weight: 400;
+  color: rgba(255,255,255,0.42);
+}
+
+.ticker-amount {
+  margin-left: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 20px;
+  letter-spacing: 0.03em;
+  flex-shrink: 0;
+}
+
+.amount-sub  { background: rgba(145,71,255,0.28); color: #d4b0ff; border: 1px solid rgba(145,71,255,0.22); }
+.amount-gift { background: rgba(252,161,73,0.2);  color: #fdc97a; border: 1px solid rgba(252,161,73,0.18); }
+.amount-bits { background: rgba(0,176,255,0.15);  color: #63d4ff; border: 1px solid rgba(0,176,255,0.18); }
+
+.ticker-sep {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 16px;
+  color: rgba(145,71,255,0.28);
+  font-size: 14px;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.empty-msg {
+  color: rgba(255,255,255,0.22);
+  font-size: 12px;
+  padding: 0 30px;
+  font-style: italic;
+}
+
+/* Pulse dot — shown when live-connected */
+.live-dot {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #9147ff;
+  z-index: 20;
+  display: none;
+  animation: pulse 2s infinite;
+}
+
+.live-dot.active { display: block; }
+
+@keyframes pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(145,71,255,0.6); }
+  70%  { box-shadow: 0 0 0 6px rgba(145,71,255,0); }
+  100% { box-shadow: 0 0 0 0 rgba(145,71,255,0); }
+}
+</style>
+</head>
+<body>
+
+<div class="ticker-bar">
+  <div class="ticker-track-wrapper">
+    <div class="ticker-track" id="track">
+      <span class="empty-msg">Connecting to Twitch — waiting for events…</span>
+    </div>
+  </div>
+  <div class="live-dot" id="liveDot" title="Live connected"></div>
+</div>
+
+<script>
+/* ══════════════════════════════════════════════
+   CONFIGURATION — edit these 4 fields
+   ══════════════════════════════════════════════ */
+const CONFIG = {
+  channel:     'YOUR_CHANNEL_NAME',   // your Twitch username, lowercase
+  clientId:    'YOUR_CLIENT_ID',      // from dev.twitch.tv
+  oauthToken:  'YOUR_OAUTH_TOKEN',    // from twitchtokengenerator.com (no "oauth:" prefix)
+  demoMode:    true,                  // ← set to false once credentials are filled in
+
+  scrollSpeed:    70,    // px/sec — higher = faster train (50–120)
+  minBitsToShow:  1,     // hide cheers below this amount (e.g. 100)
+  maxEvents:      60,    // max events held in the rotation
+};
+
+/* ══════════════════════════════════════════════
+   ICON SVGs (inline, no external deps)
+   ══════════════════════════════════════════════ */
+const ICON = {
+  sub:  `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>`,
+  gift: `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 12v10H4V12H2v-2h20v2h-2zm-9 0v8h2v-8h-2zm6.5-5A2.5 2.5 0 0112 4.5C12 3.12 13.12 2 14.5 2S17 3.12 17 4.5 15.88 7 14.5 7H12V5.5zm-5 0H9.5C8.12 7 7 5.88 7 4.5S8.12 2 9.5 2 12 3.12 12 4.5V7H9.5z"/></svg>`,
+  bits: `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M13 3l-4 8h3l-4 10 12-13h-6l5-5z"/></svg>`,
+};
+
+/* ══════════════════════════════════════════════
+   DEMO EVENTS
+   ══════════════════════════════════════════════ */
+const DEMO_EVENTS = [
+  { type:'gift', name:'PixelWitch',     detail:'gifted 5 subs to the community',   amount:'×5 Gifts' },
+  { type:'bits', name:'NeonRacer99',    detail:'cheered',                           amount:'500 Bits' },
+  { type:'sub',  name:'StarforgePro',   detail:'subscribed · Tier 1 · Month 4',    amount:'Tier 1'   },
+  { type:'gift', name:'CryptoKnight',   detail:'gifted a sub to DarkMatter7',       amount:'×1 Gift'  },
+  { type:'bits', name:'VoidWalker',     detail:'cheered',                           amount:'1,000 Bits'},
+  { type:'sub',  name:'LunaticDreamer', detail:'resubscribed · Tier 2 · Month 12', amount:'Tier 2'   },
+  { type:'gift', name:'TheRealGhost',   detail:'gifted 10 subs to the community',  amount:'×10 Gifts'},
+  { type:'bits', name:'RubyStorm',      detail:'cheered',                           amount:'250 Bits' },
+  { type:'sub',  name:'CelestialArc',   detail:'subscribed · Tier 3 · Month 1',    amount:'Tier 3'   },
+  { type:'bits', name:'NightOwl420',    detail:'cheered',                           amount:'5,000 Bits'},
+];
+
+/* ══════════════════════════════════════════════
+   STATE
+   ══════════════════════════════════════════════ */
+let events    = [];
+let pixPos    = 0;
+let lastTS    = null;
+let loopLen   = 0;  // width of one copy of the event list
+
+const track   = document.getElementById('track');
+const liveDot = document.getElementById('liveDot');
+
+/* ══════════════════════════════════════════════
+   RENDER TRACK
+   ══════════════════════════════════════════════ */
+function esc(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function makeItem(ev) {
+  const d = document.createElement('div');
+  d.className = 'ticker-item';
+  d.innerHTML =
+    `<div class="ticker-icon icon-${ev.type}">${ICON[ev.type]}</div>` +
+    `<div class="ticker-text">` +
+      `<span class="ticker-name">${esc(ev.name)}</span>` +
+      `<span class="ticker-detail">${esc(ev.detail)}</span>` +
+    `</div>` +
+    `<span class="ticker-amount amount-${ev.type}">${esc(ev.amount)}</span>`;
+  return d;
+}
+
+function makeSep() {
+  const s = document.createElement('span');
+  s.className = 'ticker-sep';
+  s.textContent = '◆';
+  return s;
+}
+
+function rebuildTrack() {
+  track.innerHTML = '';
+  if (!events.length) {
+    track.innerHTML = '<span class="empty-msg">Waiting for events…</span>';
+    loopLen = 0;
+    return;
+  }
+
+  // Build one logical "copy" of all events
+  const frag = document.createDocumentFragment();
+  events.forEach((ev, i) => {
+    frag.appendChild(makeItem(ev));
+    if (i < events.length - 1) frag.appendChild(makeSep());
+  });
+  frag.appendChild(makeSep()); // trailing separator before next copy
+
+  // Duplicate until we have enough to fill 3× 2000px
+  const dummy = document.createElement('div');
+  dummy.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap;display:flex;';
+  dummy.appendChild(frag.cloneNode(true));
+  document.body.appendChild(dummy);
+  const oneW = dummy.scrollWidth;
+  document.body.removeChild(dummy);
+  loopLen = oneW;
+
+  const copies = Math.max(4, Math.ceil(3 * 2000 / oneW) + 1);
+  for (let c = 0; c < copies; c++) {
+    frag.cloneNode ? track.appendChild(frag.cloneNode(true)) : null;
+  }
+  // rebuild from scratch properly
+  track.innerHTML = '';
+  for (let c = 0; c < copies; c++) {
+    events.forEach((ev, i) => {
+      track.appendChild(makeItem(ev));
+      if (i < events.length - 1) track.appendChild(makeSep());
+    });
+    track.appendChild(makeSep());
+  }
+
+  requestAnimationFrame(() => {
+    loopLen = track.scrollWidth / copies;
+  });
+
+  pixPos = 0;
+  track.style.transform = 'translateX(0px)';
+}
+
+/* ══════════════════════════════════════════════
+   ANIMATION LOOP
+   ══════════════════════════════════════════════ */
+function animate(ts) {
+  if (!lastTS) lastTS = ts;
+  const dt = Math.min(ts - lastTS, 50);
+  lastTS = ts;
+
+  if (loopLen > 0) {
+    pixPos -= CONFIG.scrollSpeed * dt / 1000;
+    if (Math.abs(pixPos) >= loopLen) pixPos += loopLen;
+    track.style.transform = `translateX(${Math.round(pixPos)}px)`;
+  }
+  requestAnimationFrame(animate);
+}
+
+/* ══════════════════════════════════════════════
+   ADD NEW EVENT (prepend to list)
+   ══════════════════════════════════════════════ */
+function addEvent(ev) {
+  // Avoid exact duplicates back-to-back
+  const first = events[0];
+  if (first && first.name === ev.name && first.type === ev.type && first.amount === ev.amount) return;
+  events.unshift(ev);
+  if (events.length > CONFIG.maxEvents) events.pop();
+  rebuildTrack();
+}
+
+/* ══════════════════════════════════════════════
+   TWITCH EVENTSUB — LIVE CONNECTION
+   ══════════════════════════════════════════════ */
+async function connectTwitch() {
+  // 1. Resolve broadcaster user ID
+  let broadcasterId;
+  try {
+    const r = await fetch(
+      `https://api.twitch.tv/helix/users?login=${encodeURIComponent(CONFIG.channel)}`,
+      { headers: { 'Client-ID': CONFIG.clientId, 'Authorization': `Bearer ${CONFIG.oauthToken}` } }
+    );
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    if (!d.data || !d.data[0]) throw new Error('Channel not found');
+    broadcasterId = d.data[0].id;
+    console.log('[Twitch] Broadcaster ID:', broadcasterId);
+  } catch(e) {
+    console.error('[Twitch] Could not get broadcaster ID:', e.message);
+    track.innerHTML = `<span class="empty-msg">⚠ Twitch auth error — check CLIENT ID / TOKEN in config</span>`;
+    return;
+  }
+
+  // 2. Open EventSub WebSocket
+  const ws = new WebSocket('wss://eventsub.wss.twitch.tv/ws');
+
+  ws.onopen = () => console.log('[Twitch] EventSub WS open');
+
+  ws.onclose = () => {
+    console.warn('[Twitch] WS closed — reconnecting in 5s');
+    liveDot.classList.remove('active');
+    setTimeout(connectTwitch, 5000);
+  };
+
+  ws.onerror = (e) => console.error('[Twitch] WS error', e);
+
+  ws.onmessage = async (raw) => {
+    let msg;
+    try { msg = JSON.parse(raw.data); } catch { return; }
+
+    const msgType = msg.metadata?.message_type;
+
+    // ── SESSION WELCOME: register subscriptions ──
+    if (msgType === 'session_welcome') {
+      const sessionId = msg.payload.session.id;
+      liveDot.classList.add('active');
+      console.log('[Twitch] Session:', sessionId);
+
+      const subs = [
+        // New sub (not gifted)
+        { type:'channel.subscribe',            version:'1', condition:{ broadcaster_user_id: broadcasterId } },
+        // Gifted subs
+        { type:'channel.subscription.gift',    version:'1', condition:{ broadcaster_user_id: broadcasterId } },
+        // Resubs / custom messages
+        { type:'channel.subscription.message', version:'1', condition:{ broadcaster_user_id: broadcasterId } },
+        // Bit cheers
+        { type:'channel.cheer',                version:'1', condition:{ broadcaster_user_id: broadcasterId } },
+      ];
+
+      for (const sub of subs) {
+        const res = await fetch('https://api.twitch.tv/helix/eventsub/subscriptions', {
+          method: 'POST',
+          headers: {
+            'Client-ID': CONFIG.clientId,
+            'Authorization': `Bearer ${CONFIG.oauthToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            type:      sub.type,
+            version:   sub.version,
+            condition: sub.condition,
+            transport: { method: 'websocket', session_id: sessionId },
+          }),
+        }).catch(e => ({ ok: false, _err: e }));
+        if (res.ok === false) console.warn('[Twitch] Sub failed:', sub.type);
+        else console.log('[Twitch] Subscribed to:', sub.type);
+      }
+    }
+
+    // ── SESSION KEEPALIVE: nothing to do ──
+    if (msgType === 'session_keepalive') return;
+
+    // ── NOTIFICATION: parse and push event ──
+    if (msgType !== 'notification') return;
+
+    const evType  = msg.metadata.subscription_type;
+    const payload = msg.payload.event;
+
+    if (evType === 'channel.subscription.gift') {
+      const count = payload.total || 1;
+      const to    = count === 1
+        ? `gifted a sub to ${payload.recipient_user_name || 'the community'}`
+        : `gifted ${count} subs to the community`;
+      addEvent({
+        type:   'gift',
+        name:   payload.user_name || 'Anonymous',
+        detail: to,
+        amount: `×${count} Gift${count !== 1 ? 's' : ''}`,
+      });
+    }
+
+    else if (evType === 'channel.subscribe' && !payload.is_gift) {
+      const tier = ({ '1000':'Tier 1','2000':'Tier 2','3000':'Tier 3' })[payload.tier] || 'Tier 1';
+      addEvent({
+        type:   'sub',
+        name:   payload.user_name,
+        detail: `subscribed · ${tier}`,
+        amount: tier,
+      });
+    }
+
+    else if (evType === 'channel.subscription.message') {
+      const tier   = ({ '1000':'Tier 1','2000':'Tier 2','3000':'Tier 3' })[payload.tier] || 'Tier 1';
+      const months = payload.cumulative_months || 1;
+      addEvent({
+        type:   'sub',
+        name:   payload.user_name,
+        detail: `resubscribed · ${tier} · Month ${months}`,
+        amount: tier,
+      });
+    }
+
+    else if (evType === 'channel.cheer') {
+      if ((payload.bits || 0) < CONFIG.minBitsToShow) return;
+      addEvent({
+        type:   'bits',
+        name:   payload.user_name || 'Anonymous',
+        detail: 'cheered',
+        amount: payload.bits.toLocaleString() + ' Bits',
+      });
+    }
+  };
+}
+
+/* ══════════════════════════════════════════════
+   DEMO MODE
+   ══════════════════════════════════════════════ */
+function runDemo() {
+  events = [...DEMO_EVENTS];
+  rebuildTrack();
+  const pool = [
+    () => ({ type:'bits', name:'DemoViewer'+Math.floor(Math.random()*99), detail:'cheered', amount:Math.floor(Math.random()*900+100).toLocaleString()+' Bits' }),
+    () => ({ type:'gift', name:'DemoGifter', detail:'gifted 3 subs to the community', amount:'×3 Gifts' }),
+    () => ({ type:'sub',  name:'DemoSubber'+Math.floor(Math.random()*99), detail:'subscribed · Tier 1', amount:'Tier 1' }),
+  ];
+  setInterval(() => addEvent(pool[Math.floor(Math.random()*pool.length)]()), 8000);
+}
+
+/* ══════════════════════════════════════════════
+   BOOT
+   ══════════════════════════════════════════════ */
+if (CONFIG.demoMode || CONFIG.channel === 'YOUR_CHANNEL_NAME') {
+  runDemo();
+} else {
+  connectTwitch();
+}
+requestAnimationFrame(animate);
+</script>
+
+</body>
+</html>
